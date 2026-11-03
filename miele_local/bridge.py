@@ -96,6 +96,11 @@ def save_json(path, data):
 def get_keys():
     from MieleCrypto import MieleProvisioningInfo
 
+    opts = load_json(OPTIONS, {}) or {}
+    if opts.get("group_id") and opts.get("group_key"):
+        keys = {"GroupID": opts["group_id"].strip().upper(), "GroupKey": opts["group_key"].strip().upper()}
+        save_json(KEYS, keys)
+        return keys
     keys = load_json(KEYS)
     if not keys:
         keys = MieleProvisioningInfo.generate_random().to_dict()

@@ -1,5 +1,5 @@
 name: Miele lokal
-version: "0.2.0"
+version: "0.3.0"
 slug: miele_local
 description: Lokal styrning av Miele@home-maskiner (MieleRESTServer) med MQTT till HA
 url: https://github.com/akappner/MieleRESTServer
@@ -18,9 +18,13 @@ options:
   name: mrs_potts
   poll_seconds: 30
   debug: false
+  group_id: ""
+  group_key: ""
 schema:
   mode: list(probe|commission|run)
   host: str?
   name: str
   poll_seconds: int(10,600)
   debug: bool
+  group_id: str?
+  group_key: password?
