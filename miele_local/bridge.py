@@ -18,6 +18,67 @@ STATE = "/data/state.json"
 
 log = logging.getLogger("miele_local")
 
+# ---------------------------------------------------------------- legacy TLS
+import ssl
+from requests.adapters import HTTPAdapter
+
+
+class LegacyTLS(HTTPAdapter):
+    """Miele XKM modules use old TLS; allow it (local device, self-signed)."""
+
+    def _ctx(self):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            ctx.minimum_version = ssl.TLSVersion.TLSv1
+        except (ValueError, AttributeError):
+            pass
+        ctx.set_ciphers("ALL:@SECLEVEL=0")
+        ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+        return ctx
+
+    def init_poolmanager(self, *a, **kw):
+        kw["ssl_context"] = self._ctx()
+        return super().init_poolmanager(*a, **kw)
+
+    def proxy_manager_for(self, *a, **kw):
+        kw["ssl_context"] = self._ctx()
+        return super().proxy_manager_for(*a, **kw)
+
+
+SESSION = requests.Session()
+SESSION.mount("https://", LegacyTLS())
+SESSION.verify = False
+SCHEME = {"value": "http"}
+
+
+def patch_library(scheme):
+    """MieleCrypto hardcodes http://; route its calls through SESSION with our scheme."""
+    import MieleCrypto
+
+    SCHEME["value"] = scheme
+
+    class _Req:
+        @staticmethod
+        def _fix(url):
+            if url.startswith("http://") and SCHEME["value"] == "https":
+                url = "https://" + url[len("http://"):]
+            return url
+
+        def get(self, url, **kw):
+            kw.setdefault("timeout", 15)
+            return SESSION.get(self._fix(url), **kw)
+
+        def put(self, url, **kw):
+            kw.setdefault("timeout", 15)
+            return SESSION.put(self._fix(url), **kw)
+
+        def __getattr__(self, name):
+            return getattr(requests, name)
+
+    MieleCrypto.requests = _Req()
+
 
 def load_json(path, default=None):
     try:
@@ -51,13 +112,13 @@ def probe(host):
         for p in paths:
             url = f"{scheme}://{host}/{p}"
             try:
-                r = requests.get(url, timeout=5, verify=False,
-                                 headers={"Accept": "application/vnd.miele.v1+json"})
+                r = SESSION.get(url, timeout=5,
+                                headers={"Accept": "application/vnd.miele.v1+json"})
                 body = r.text[:300].replace("\n", " ")
                 log.info("%s -> %s %s | %s", url, r.status_code,
                          r.headers.get("Content-Type", ""), body)
             except requests.RequestException as e:
-                log.info("%s -> FEL %s", url, type(e).__name__)
+                log.info("%s -> FEL %s: %s", url, type(e).__name__, str(e)[:200])
 
 
 # ---------------------------------------------------------------- commission
@@ -73,16 +134,19 @@ def commission(host):
     for scheme in ("http", "https"):
         url = f"{scheme}://{host}/Security/Commissioning"
         try:
-            r = requests.put(url, data=body, headers=headers, timeout=10, verify=False)
+            r = SESSION.put(url, data=body, headers=headers, timeout=10)
             log.info("COMMISSION %s -> %s %s", url, r.status_code, r.text[:300])
             if r.status_code in (200, 201, 204):
                 ok = True
+                scheme_ok = scheme
                 break
         except requests.RequestException as e:
             log.info("COMMISSION %s -> FEL %s", url, e)
     st = load_json(STATE, {}) or {}
     st["commissioned"] = ok
     st["host"] = host
+    if ok:
+        st["scheme"] = scheme_ok
     save_json(STATE, st)
     if ok:
         log.info("Nyckeln accepterad. Byt mode till run och starta om appen.")
@@ -104,8 +168,9 @@ def run(host, name, poll):
     import paho.mqtt.client as mqtt
     from Server import MieleEndpointConfig
 
-    keys = get_keys()
     st = load_json(STATE, {}) or {}
+    patch_library(st.get("scheme", "https"))
+    keys = get_keys()
     route = st.get("route", "auto") if st.get("host") == host else "auto"
     ep = MieleEndpointConfig({"host": host, "groupId": keys["GroupID"],
                               "groupKey": keys["GroupKey"], "route": route})
