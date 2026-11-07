@@ -1,0 +1,12 @@
+{
+  "domain": "kerbl_energizer",
+  "name": "Kerbl Smart Energizer",
+  "codeowners": ["@Wilsson2000"],
+  "config_flow": true,
+  "documentation": "https://github.com/Wilsson2000/ha-addons",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Wilsson2000/ha-addons/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
